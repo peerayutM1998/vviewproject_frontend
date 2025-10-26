@@ -15,105 +15,149 @@ class ColorIdentificationPage extends StatefulWidget {
   State<ColorIdentificationPage> createState() => _ColorIdentificationPageState();
 }
 
-class _ColorIdentificationPageState extends State<ColorIdentificationPage> {
+class _ColorIdentificationPageState extends State<ColorIdentificationPage>
+    with WidgetsBindingObserver {
   final CameraService _cameraService = CameraService();
   final TtsService _ttsService = TtsService();
+
   String _colorName = '';
   List<int> _rgb = [0, 0, 0];
-  bool _isLoading = false;
-  String _displayText = '';
+
+  bool _isLoading = false;      // โหลดจากแกลเลอรี/เตรียมกล้อง
+  bool _processing = false;     // กันกดซ้ำขณะพูด/ประมวลผลสั้น ๆ
   final GlobalKey _imageKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _cameraService.initializeCamera().then((_) {
       if (mounted) setState(() {});
     });
     _ttsService.initializeTts(_showError);
   }
 
-  Future<void> _takePicture() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controller = _cameraService.controller;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    if (state == AppLifecycleState.inactive) {
+      controller.dispose();
+    } else if (state == AppLifecycleState.resumed) {
+      _cameraService.initializeCamera().then((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  // ---------- Helpers ----------
+  Future<void> _announce(String text) async {
+    try {
+      await _ttsService.speakText(text, _showError);
+    } catch (_) {}
+  }
+
+  void _resetColor() {
     setState(() {
-      _isLoading = true;
+      _colorName = '';
+      _rgb = [0, 0, 0];
     });
+  }
+
+  // ---------- Actions ----------
+  Future<void> _takePicture() async {
+    if (!_cameraService.isCameraInitialized()) return;
+    setState(() => _isLoading = true);
     try {
       final image = await _cameraService.takePicture();
       if (image != null) {
-        setState(() {
-          _colorName = '';
-          _rgb = [0, 0, 0];
-        });
+        _resetColor();
+        if (mounted) setState(() {});
       } else {
         _showError('ไม่สามารถถ่ายภาพได้');
       }
     } catch (e) {
       _showError('$e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    setState(() {
-      _isLoading = false;
-    });
   }
 
   Future<void> _pickImage() async {
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
     try {
       final image = await _cameraService.pickImage();
       if (image != null) {
-        setState(() {
-          _colorName = '';
-          _rgb = [0, 0, 0];
-        });
+        _resetColor();
+        if (mounted) setState(() {});
       } else {
         _showError('ไม่สามารถเลือกภาพได้');
       }
     } catch (e) {
       _showError('$e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    setState(() {
-      _isLoading = false;
-    });
+  }
+
+  void _retake() {
+    _cameraService.clearImage();
+    _resetColor();
+    setState(() {});
+  }
+
+  Future<void> _confirmImage() async {
+    // ไม่มีการประมวลผลหนัก แค่ยืนยันและแนะนำการใช้งานด้วยเสียง
+    if (_processing) return;
+    setState(() => _processing = true);
+    try {
+      await _announce('แตะตำแหน่งบนภาพเพื่อระบุสี');
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
   }
 
   Future<void> _getColorAtPosition(Offset localPosition, Size imageSize) async {
-    if (_cameraService.image == null) return;
+    if (_cameraService.image == null || _processing) return;
+    setState(() => _processing = true);
 
     try {
       final file = File(_cameraService.image!.path);
       final imageBytes = await file.readAsBytes();
-      final image = img.decodeImage(imageBytes);
+      final decoded = img.decodeImage(imageBytes);
 
-      if (image == null) {
+      if (decoded == null) {
         _showError('ไม่สามารถโหลดภาพได้');
         return;
       }
 
-      final x = (localPosition.dx / imageSize.width * image.width).round();
-      final y = (localPosition.dy / imageSize.height * image.height).round();
+      final x = (localPosition.dx / imageSize.width * decoded.width).round();
+      final y = (localPosition.dy / imageSize.height * decoded.height).round();
 
-      if (x < 0 || x >= image.width || y < 0 || y >= image.height) {
+      if (x < 0 || x >= decoded.width || y < 0 || y >= decoded.height) {
         _showError('แตะนอกขอบเขตของภาพ');
         return;
       }
 
-      final pixel = image.getPixel(x, y);
-      final r = pixel[0].toInt();
-      final g = pixel[1].toInt();
-      final b = pixel[2].toInt();
+      final pixel = decoded.getPixel(x, y);
+      final r = pixel.r.toInt();
+      final g = pixel.g.toInt();
+      final b = pixel.b.toInt();
 
       setState(() {
         _rgb = [r, g, b];
         _colorName = _getColorNameFromRGB(r, g, b);
-        _displayText = 'สี: $_colorName, ค่า RGB: ${_rgb.join(", ")}';
       });
 
-      // ให้ TTS อ่านเฉพาะชื่อสี
-      final ttsText = 'สี $_colorName';
-      await _ttsService.speakText(ttsText, _showError);
+
+
+      // พูดเฉพาะชื่อสี
+      await _announce('สี $_colorName');
     } catch (e) {
       _showError('เกิดข้อผิดพลาดในการระบุสี: $e');
+    } finally {
+      if (mounted) setState(() => _processing = false);
     }
   }
 
@@ -188,6 +232,7 @@ class _ColorIdentificationPageState extends State<ColorIdentificationPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _cameraService.dispose();
     _ttsService.dispose();
     super.dispose();
@@ -212,168 +257,10 @@ class _ColorIdentificationPageState extends State<ColorIdentificationPage> {
         elevation: 4,
         automaticallyImplyLeading: false,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 6))
-          : SingleChildScrollView(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const SizedBox(height: 30),
-
-              // --- พรีวิวกล้องเมื่อยังไม่มีภาพ / พรีวิวภาพเมื่อมีภาพแล้ว ---
-              if (_cameraService.image != null)
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: GestureDetector(
-                    onTapDown: (details) {
-                      final RenderBox? box =
-                      _imageKey.currentContext?.findRenderObject() as RenderBox?;
-                      if (box == null) {
-                        _showError('ไม่สามารถดึงขนาดวิดเจ็ตได้');
-                        return;
-                      }
-                      final localOffset = box.globalToLocal(details.globalPosition);
-                      final imageSize = box.size;
-                      _getColorAtPosition(localOffset, imageSize);
-                    },
-                    child: Image.file(
-                      File(_cameraService.image!.path),
-                      key: _imageKey,
-                      height: 250,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: SizedBox(
-                    height: 250,
-                    child: (controller != null && controller.value.isInitialized)
-                        ? AspectRatio(
-                      aspectRatio: controller.value.aspectRatio,
-                      child: CameraPreview(controller),
-                    )
-                        : const Center(child: CircularProgressIndicator(strokeWidth: 6)),
-                  ),
-                ),
-
-              const SizedBox(height: 30),
-
-              // ข้อความผลลัพธ์สี
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text(
-                  _colorName.isEmpty
-                      ? 'ยังไม่พบสี'
-                      : 'สี: $_colorName\nค่า RGB: ${_rgb.join(", ")}',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.prompt(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                    letterSpacing: 1.2,
-                  ),
-                  semanticsLabel: _colorName.isEmpty
-                      ? 'ยังไม่พบสี'
-                      : 'สี: $_colorName, ค่า RGB: ${_rgb.join(", ")}',
-                ),
-              ),
-
-              const SizedBox(height: 30),
-
-              // ปุ่มถ่ายภาพ
-              ElevatedButton(
-                onPressed: _cameraService.isCameraInitialized() ? _takePicture : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF055DD1),
-                  minimumSize: const Size(250, 80),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  elevation: 5,
-                ),
-                child: Text(
-                  'ถ่ายภาพ',
-                  style: GoogleFonts.prompt(
-                    fontSize: 26,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                  ),
-                  semanticsLabel: 'ถ่ายภาพ',
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // ปุ่มเลือกภาพ
-              ElevatedButton(
-                onPressed: _pickImage,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF055DD1),
-                  minimumSize: const Size(250, 80),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  elevation: 5,
-                ),
-                child: Text(
-                  'เลือกภาพ',
-                  style: GoogleFonts.prompt(
-                    fontSize: 26,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                  ),
-                  semanticsLabel: 'เลือกภาพ',
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // ปุ่ม TTS
-              ElevatedButton(
-                onPressed: _ttsService.isSpeaking
-                    ? _ttsService.stopSpeaking
-                    : () {
-                  if (_colorName.isNotEmpty && _colorName != 'ไม่พบสี') {
-                    final textToSpeak =
-                        'สี: $_colorName, ค่า RGB: ${_rgb.join(", ")}';
-                    _ttsService.speakText(textToSpeak, _showError);
-                  } else {
-                    _showError('ไม่มีสีให้อ่าน');
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                  _ttsService.isSpeaking ? const Color(0xFFE5F7FF) : const Color(0xFF9D150B),
-                  minimumSize: const Size(250, 80),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  elevation: 5,
-                ),
-                child: Text(
-                  _ttsService.isSpeaking ? 'หยุดเสียง' : 'ฟังซ้ำ',
-                  style: GoogleFonts.prompt(
-                    fontSize: 26,
-                    color: _ttsService.isSpeaking ? const Color(0xFF02037E) : Colors.white,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                  ),
-                  semanticsLabel: _ttsService.isSpeaking ? 'หยุดเสียง' : 'ฟังซ้ำ',
-                ),
-              ),
-
-              const SizedBox(height: 30),
-            ],
-          ),
-        ),
+      body: SafeArea(
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator(strokeWidth: 6))
+            : _buildBody(controller),
       ),
       bottomNavigationBar: BottomAppBar(
         color: const Color(0xFF15136E),
@@ -402,6 +289,243 @@ class _ColorIdentificationPageState extends State<ColorIdentificationPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildBody(CameraController? controller) {
+    // โหมด 1: ยังไม่มีรูป -> กล้องสด + แถบควบคุม (สลับกล้อง/ถ่าย/แฟลช) + ปุ่มเลือกแกลเลอรี
+    if (_cameraService.image == null) {
+      if (controller == null || !controller.value.isInitialized) {
+        return const Center(child: CircularProgressIndicator(strokeWidth: 6));
+      }
+      return Column(
+        children: [
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                AspectRatio(
+                  aspectRatio: controller.value.aspectRatio,
+                  child: CameraPreview(controller),
+                ),
+                // overlay เบา ๆ
+                IgnorePointer(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white.withOpacity(0.2), width: 2),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // แถบควบคุมล่าง
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 24.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // สลับกล้อง
+                IconButton(
+                  iconSize: 36,
+                  tooltip: 'สลับกล้อง',
+                  onPressed: () async {
+                    await _announce('สลับกล้อง');
+                    await _cameraService.switchCamera();
+                    if (mounted) setState(() {});
+                  },
+                  icon: const Icon(Icons.cameraswitch),
+                ),
+                // ปุ่มชัตเตอร์วงกลม "ถ่าย"
+                SizedBox(
+                  width: 84,
+                  height: 84,
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      await _announce('ถ่ายภาพ');
+                      await _takePicture();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF15136E),
+                      shape: const CircleBorder(),
+                      elevation: 3,
+                      side: const BorderSide(color: Colors.white, width: 4),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: Text(
+                      'ถ่าย',
+                      style: GoogleFonts.prompt(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      semanticsLabel: 'ถ่าย',
+                    ),
+                  ),
+                ),
+                // แฟลช
+                IconButton(
+                  iconSize: 32,
+                  tooltip: 'แฟลช',
+                  onPressed: () async {
+                    await _announce('แฟลช');
+                    await _cameraService.toggleFlash();
+                    if (mounted) setState(() {});
+                  },
+                  icon: Icon(
+                    _cameraService.isFlashOn ? Icons.flash_on : Icons.flash_off,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // ปุ่มเลือกจากแกลเลอรี
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: ElevatedButton(
+              onPressed: _pickImage,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF055DD1),
+                minimumSize: const Size(240, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+              ),
+              child: Text(
+                'เลือกภาพจากแกลเลอรี',
+                style: GoogleFonts.prompt(
+                  fontSize: 20,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // โหมด 2: มีรูปแล้ว -> พรีวิว + ปุ่ม ถ่ายใหม่/ใช้ภาพนี้ + แตะภาพเพื่อระบุสี
+    return Column(
+      children: [
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: GestureDetector(
+              onTapDown: (details) {
+                final RenderBox? box =
+                _imageKey.currentContext?.findRenderObject() as RenderBox?;
+                if (box == null) {
+                  _showError('ไม่สามารถดึงขนาดวิดเจ็ตได้');
+                  return;
+                }
+                final localOffset = box.globalToLocal(details.globalPosition);
+                final imageSize = box.size;
+                _getColorAtPosition(localOffset, imageSize);
+              },
+              child: Image.file(
+                File(_cameraService.image!.path),
+                key: _imageKey,
+                fit: BoxFit.contain,
+                width: double.infinity,
+              ),
+            ),
+          ),
+        ),
+        if (_processing)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: CircularProgressIndicator(strokeWidth: 5),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _processing ? null : _retake,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 56),
+                    side: const BorderSide(color: Color(0xFF055DD1), width: 2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  ),
+                  child: Text(
+                    'ถ่ายใหม่',
+                    style: GoogleFonts.prompt(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF055DD1),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _processing ? null : _confirmImage,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF055DD1),
+                    minimumSize: const Size(0, 56),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                    elevation: 2,
+                  ),
+                  child: Text(
+                    'ใช้ภาพนี้',
+                    style: GoogleFonts.prompt(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // แสดงผลลัพธ์สี
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          child: Text(
+            _colorName.isEmpty
+                ? 'ยังไม่พบสี'
+                : 'สี: $_colorName\nค่า RGB: ${_rgb.join(", ")}',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.prompt(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        // ปุ่มฟังซ้ำ/หยุดเสียง (ออปชัน)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 24),
+          child: ElevatedButton(
+            onPressed: _ttsService.isSpeaking
+                ? _ttsService.stopSpeaking
+                : () {
+              if (_colorName.isNotEmpty && _colorName != 'ไม่พบสี') {
+                final textToSpeak = 'สี: $_colorName, ค่า อาร์จีบี: ${_rgb.join(", ")}';
+                _ttsService.speakText(textToSpeak, _showError);
+              } else {
+                _showError('ไม่มีสีให้อ่าน');
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+              _ttsService.isSpeaking ? const Color(0xFFE5F7FF) : const Color(0xFF9D150B),
+              minimumSize: const Size(250, 56),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+              elevation: 2,
+            ),
+            child: Text(
+              _ttsService.isSpeaking ? 'หยุดเสียง' : 'ฟังซ้ำ',
+              style: GoogleFonts.prompt(
+                fontSize: 20,
+                color: _ttsService.isSpeaking ? const Color(0xFF02037E) : Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

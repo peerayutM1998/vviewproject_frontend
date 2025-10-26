@@ -37,7 +37,6 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // จัดการกล้องเวลาแอปพัก/กลับมา
     final controller = _cameraService.controller;
     if (controller == null || !controller.value.isInitialized) {
       return;
@@ -56,7 +55,7 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
     try {
       final img = await _cameraService.takePicture();
       if (img != null) {
-        setState(() {}); // จะเข้าโหมด "พรีวิวภาพที่ถ่าย" ทันที
+        setState(() {}); // จะเข้าโหมดพรีวิวภาพ
       }
     } catch (e) {
       _showError('$e');
@@ -119,6 +118,12 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
     );
   }
 
+  Future<void> _announce(String text) async {
+    try {
+      await _ttsService.speakText(text, _showError);
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -172,7 +177,6 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
                   fontWeight: FontWeight.w600,
                   letterSpacing: 1.1,
                 ),
-                semanticsLabel: 'ย้อนกลับ',
               ),
             ),
           ),
@@ -182,7 +186,7 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
   }
 
   Widget _buildBody(CameraController? controller) {
-    // โหมด 1: ยังไม่มีรูป -> แสดงพรีวิวกล้องสด
+    // โหมด 1: ยังไม่มีรูป -> กล้องสด
     if (_cameraService.image == null) {
       if (controller == null || !controller.value.isInitialized) {
         return const Center(child: CircularProgressIndicator(strokeWidth: 6));
@@ -193,12 +197,10 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // กล้องสด
                 AspectRatio(
                   aspectRatio: controller.value.aspectRatio,
                   child: CameraPreview(controller),
                 ),
-                // เส้นกรอบช่วยเล็ง (overlay เบา ๆ)
                 IgnorePointer(
                   child: Container(
                     decoration: BoxDecoration(
@@ -215,31 +217,49 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // สลับกล้อง
+                // ปุ่มสลับกล้อง (พูดว่า "สลับกล้อง")
                 IconButton(
                   iconSize: 36,
+                  tooltip: 'สลับกล้อง',
                   onPressed: () async {
+                    await _announce('สลับกล้อง');
                     await _cameraService.switchCamera();
                     if (mounted) setState(() {});
                   },
                   icon: const Icon(Icons.cameraswitch),
                 ),
-                // ปุ่มชัตเตอร์
-                GestureDetector(
-                  onTap: _capture,
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
+                // ปุ่มถ่ายภาพ (พูดว่า "ถ่ายภาพ")
+                SizedBox(
+                  width: 84,
+                  height: 84,
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      await _announce('ถ่ายภาพ');
+                      await _capture();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF15136E),
+                      shape: const CircleBorder(),
+                      elevation: 3,
+                      side: const BorderSide(color: Colors.white, width: 4),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: Text(
+                      'ถ่าย',
+                      style: GoogleFonts.prompt(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
-                // แฟลช
+                // ปุ่มแฟลช (พูดว่า "แฟลช")
                 IconButton(
                   iconSize: 32,
+                  tooltip: 'แฟลช',
                   onPressed: () async {
+                    await _announce('แฟลช');
                     await _cameraService.toggleFlash();
                     if (mounted) setState(() {});
                   },
@@ -250,7 +270,6 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
               ],
             ),
           ),
-          // ปุ่มเลือกจากแกลเลอรี
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: ElevatedButton(
@@ -262,7 +281,11 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
               ),
               child: Text(
                 'เลือกภาพจากแกลเลอรี',
-                style: GoogleFonts.prompt(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold),
+                style: GoogleFonts.prompt(
+                  fontSize: 20,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ),
@@ -270,7 +293,7 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
       );
     }
 
-    // โหมด 2: มีรูปแล้ว -> แสดงพรีวิวเพื่อยืนยัน
+    // โหมด 2: แสดงพรีวิวภาพหลังถ่าย
     return Column(
       children: [
         Expanded(
@@ -283,10 +306,11 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
             ),
           ),
         ),
-        if (_processingImage) const Padding(
-          padding: EdgeInsets.only(bottom: 12),
-          child: CircularProgressIndicator(strokeWidth: 5),
-        ),
+        if (_processingImage)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: CircularProgressIndicator(strokeWidth: 5),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           child: Row(
@@ -301,7 +325,11 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
                   ),
                   child: Text(
                     'ถ่ายใหม่',
-                    style: GoogleFonts.prompt(fontSize: 20, fontWeight: FontWeight.w700, color: const Color(0xFF055DD1)),
+                    style: GoogleFonts.prompt(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF055DD1),
+                    ),
                   ),
                 ),
               ),
@@ -317,21 +345,27 @@ class _ReadTextPageState extends State<ReadTextPage> with WidgetsBindingObserver
                   ),
                   child: Text(
                     'ใช้ภาพนี้',
-                    style: GoogleFonts.prompt(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+                    style: GoogleFonts.prompt(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
             ],
           ),
         ),
-        // แสดงผลข้อความที่แยกได้
         if (_extractedText.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
             child: Text(
               'ข้อความที่แยกได้: $_extractedText',
               textAlign: TextAlign.center,
-              style: GoogleFonts.prompt(fontSize: 18, fontWeight: FontWeight.w600),
+              style: GoogleFonts.prompt(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
       ],

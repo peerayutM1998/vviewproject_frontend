@@ -22,8 +22,8 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
   Map<String, int> _banknotes = {};
   int _totalValue = 0;
 
-  bool _isLoading = false;       // โหลดไฟล์จากแกลเลอรี/เตรียมกล้อง
-  bool _processing = false;      // กำลังส่งเข้าระบบตรวจจับธนบัตร
+  bool _isLoading = false;   // โหลดไฟล์จากแกลเลอรี/เตรียมกล้อง
+  bool _processing = false;  // กำลังส่งเข้าระบบตรวจจับธนบัตร
 
   @override
   void initState() {
@@ -49,12 +49,19 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
     }
   }
 
+  // ---------- Helper: พูดสั้น ๆ ----------
+  Future<void> _announce(String text) async {
+    try {
+      await _ttsService.speakText(text, _showError);
+    } catch (_) {}
+  }
+
   // ---------- Actions ----------
   Future<void> _capture() async {
     if (!_cameraService.isCameraInitialized()) return;
     try {
       final img = await _cameraService.takePicture();
-      if (img != null && mounted) setState(() {});
+      if (img != null && mounted) setState(() {}); // เข้าสู่โหมดพรีวิวภาพ
     } catch (e) {
       _showError('$e');
     }
@@ -165,7 +172,7 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
         color: const Color(0xFF15136E),
         child: InkWell(
           onTap: () {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) =>  Mainpage()));
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => Mainpage()));
           },
           splashColor: Colors.white.withOpacity(0.1),
           child: Padding(
@@ -184,7 +191,7 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
   }
 
   Widget _buildBody(CameraController? controller) {
-    // โหมด 1: ยังไม่มีรูป -> แสดงพรีวิวกล้องสด + แถบควบคุม
+    // โหมด 1: ยังไม่มีรูป -> กล้องสด + แถบควบคุมแบบ ReadTextPage
     if (_cameraService.image == null) {
       if (controller == null || !controller.value.isInitialized) {
         return const Center(child: CircularProgressIndicator(strokeWidth: 6));
@@ -199,7 +206,7 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
                   aspectRatio: controller.value.aspectRatio,
                   child: CameraPreview(controller),
                 ),
-                // overlay บาง ๆ ช่วยเล็ง (เอาออกได้)
+                // overlay เบา ๆ
                 IgnorePointer(
                   child: Container(
                     decoration: BoxDecoration(
@@ -210,41 +217,67 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
               ],
             ),
           ),
+          // แถบควบคุมล่าง (สลับกล้อง / ถ่าย / แฟลช) + เสียง
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 24.0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                // สลับกล้อง
                 IconButton(
                   iconSize: 36,
+                  tooltip: 'สลับกล้อง',
                   onPressed: () async {
+                    await _announce('สลับกล้อง');
                     await _cameraService.switchCamera();
                     if (mounted) setState(() {});
                   },
                   icon: const Icon(Icons.cameraswitch),
                 ),
-                GestureDetector(
-                  onTap: _capture,
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
+                // ปุ่มชัตเตอร์แบบวงกลม มีข้อความ "ถ่าย"
+                SizedBox(
+                  width: 84,
+                  height: 84,
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      await _announce('ถ่ายภาพ');
+                      await _capture();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF15136E),
+                      shape: const CircleBorder(),
+                      elevation: 3,
+                      side: const BorderSide(color: Colors.white, width: 4),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: Text(
+                      'ถ่าย',
+                      style: GoogleFonts.prompt(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      semanticsLabel: 'ถ่าย',
                     ),
                   ),
                 ),
+                // แฟลช
                 IconButton(
                   iconSize: 32,
+                  tooltip: 'แฟลช',
                   onPressed: () async {
+                    await _announce('แฟลช');
                     await _cameraService.toggleFlash();
                     if (mounted) setState(() {});
                   },
-                  icon: Icon(_cameraService.isFlashOn ? Icons.flash_on : Icons.flash_off),
+                  icon: Icon(
+                    _cameraService.isFlashOn ? Icons.flash_on : Icons.flash_off,
+                  ),
                 ),
               ],
             ),
           ),
+          // ปุ่มเลือกจากแกลเลอรี
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: ElevatedButton(
@@ -256,7 +289,11 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
               ),
               child: Text(
                 'เลือกภาพจากแกลเลอรี',
-                style: GoogleFonts.prompt(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold),
+                style: GoogleFonts.prompt(
+                  fontSize: 20,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ),
@@ -264,7 +301,7 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
       );
     }
 
-    // โหมด 2: มีรูปแล้ว -> แสดงพรีวิวเพื่อยืนยัน + ผลลัพธ์ (เมื่อประมวลผลเสร็จ)
+    // โหมด 2: มีรูปแล้ว -> แสดงพรีวิวเพื่อยืนยัน + ผลลัพธ์
     return Column(
       children: [
         Expanded(
@@ -277,10 +314,11 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
             ),
           ),
         ),
-        if (_processing) const Padding(
-          padding: EdgeInsets.only(bottom: 12),
-          child: CircularProgressIndicator(strokeWidth: 5),
-        ),
+        if (_processing)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: CircularProgressIndicator(strokeWidth: 5),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           child: Row(
@@ -295,7 +333,11 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
                   ),
                   child: Text(
                     'ถ่ายใหม่',
-                    style: GoogleFonts.prompt(fontSize: 20, fontWeight: FontWeight.w700, color: const Color(0xFF055DD1)),
+                    style: GoogleFonts.prompt(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF055DD1),
+                    ),
                   ),
                 ),
               ),
@@ -311,7 +353,11 @@ class _BanknotePageState extends State<BanknotePage> with WidgetsBindingObserver
                   ),
                   child: Text(
                     'ใช้ภาพนี้',
-                    style: GoogleFonts.prompt(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+                    style: GoogleFonts.prompt(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
